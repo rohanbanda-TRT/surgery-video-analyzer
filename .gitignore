@@ -1,0 +1,68 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+client_app/venv/
+venv/
+
+# Environment variables
+*.env
+
+# VS Code settings (optional)
+.vscode/
+
+# macOS metadata
+.DS_Store
+
+# Python packaging
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs and outputs
+*.log
+output.json
+
+# Credential files
+client_app/application_default_credentials.json
+client_app/traek-314011-565f38bb5e4d.json
+
+# Media files
+*.mp4
+*.mov
+*.avi
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Streamlit generated cache and folders
+.streamlit/
+client_app/.streamlit/
+
+# Ignore temporary files and backups
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Ignore large uploaded files
+client_app/surgery-compressed-*.json
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+*.json
+application_default_credentials.json
+traek-314011-565f38bb5e4d.json
+config.py
