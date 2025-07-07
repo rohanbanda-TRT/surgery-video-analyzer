@@ -61,18 +61,19 @@ def get_master_surgeries_db() -> List[Dict[str, Any]]:
         result = []
         for surgery in surgeries:
             # Extract original_surgery_types if available
-            original_types = []
-            if "original_surgery_types" in surgery and surgery["original_surgery_types"]:
-                for orig in surgery["original_surgery_types"]:
-                    original_types.append({
-                        "name": orig.get("name", ""),
-                        "summary": orig.get("summary", "")
-                    })
+            # original_types = []
+            # if "original_surgery_types" in surgery and surgery["original_surgery_types"]:
+            #     for orig in surgery["original_surgery_types"]:
+            #         original_types.append({
+            #             "name": orig.get("name", ""),
+            #             "summary": orig.get("summary", "")
+            #         })
             
             result.append({
                 "id": str(surgery["_id"]),
                 "surgery_type": surgery.get("surgery_type", ""),
-                "original_surgery_types": original_types
+                "summary": surgery.get("summary", ""),
+                # "original_surgery_types": original_types
             })
         
         logger.info(f"Retrieved {len(result)} surgeries from master collection")
@@ -112,57 +113,36 @@ def add_to_master_surgeries_db(
         logger.error(f"Error adding to master surgeries: {str(e)}")
         return f"Error adding to master surgeries: {str(e)}"
 
-if __name__ == "__main__":
-    # Example usage
-    print("MongoDB Surgery Video Analysis Functions")
-    print("---------------------------------------")
-    print("1. Store Analysis")
-    print("2. Add to Master Surgeries")
-    choice = input("Enter your choice (1/2): ")
+
+
+
+
+def get_master_surgeries_with_steps_db() -> List[Dict[str, Any]]:
+    """
+    Get all surgery details from the master surgeries collection
     
-    if choice == "1":
-        video_id = input("Enter video_id: ")
-        surgery_type = input("Enter surgery_type: ")
+    Returns:
+        List of all surgery details from master surgeries collection
+    """
+    try:
+        # Always get all surgeries from the master collection
+        surgeries = mongodb_client.master_collection.find()
         
-        print("Enter procedure steps (one per line, empty line to finish):")
-        procedure_steps = []
-        while True:
-            step = input()
-            if not step:
-                break
-            procedure_steps.append(step)
+        # Convert to list and format the results
+        result = []
+        for surgery in surgeries:
+            # Get all procedure steps - if it's a nested array, flatten it
+            procedure_steps = surgery.get("procedure_steps", [])
+            
+            result.append({
+                "id": str(surgery["_id"]),
+                "surgery_type": surgery.get("surgery_type", ""),
+                "procedure_steps": procedure_steps,
+                "summary": surgery.get("summary", "")
+            })
         
-        description = input("Enter description: ")
-        summary = input("Enter summary: ")
-        
-        result = store_analysis_in_db(
-            video_id=video_id,
-            surgery_type=surgery_type,
-            procedure_steps=procedure_steps,
-            description=description,
-            summary=summary
-        )
-        print(f"Result: {result}")
-        
-    elif choice == "2":
-        surgery_type = input("Enter surgery_type: ")
-        
-        print("Enter procedure steps (one per line, empty line to finish):")
-        procedure_steps = []
-        while True:
-            step = input()
-            if not step:
-                break
-            procedure_steps.append(step)
-        
-        summary = input("Enter summary: ")
-        
-        result = add_to_master_surgeries_db(
-            surgery_type=surgery_type,
-            procedure_steps=procedure_steps,
-            summary=summary
-        )
-        print(f"Result: {result}")
-    
-    else:
-        print("Invalid choice!")
+        logger.info(f"Retrieved {len(result)} surgeries with procedure steps and summary from master collection")
+        return result
+    except Exception as e:
+        logger.error(f"Error retrieving master surgeries: {str(e)}")
+        return []

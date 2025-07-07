@@ -1,7 +1,7 @@
 from typing import Dict, List, Any, Optional
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
-from app.db_functions import store_analysis_in_db, add_to_master_surgeries_db, get_master_surgeries_db
+from app.db_functions import store_analysis_in_db, add_to_master_surgeries_db, get_master_surgeries_db, get_master_surgeries_with_steps_db
 
 class StoreAnalysisInput(BaseModel):
     """Input for storing analysis results in the database."""
@@ -120,3 +120,30 @@ def add_to_master_surgeries_tool(
     )
     
     return f"Added to master surgeries with ID: {result_id}"
+
+
+
+
+@tool("get_master_surgeries_with_steps")
+def get_master_surgeries_with_steps_tool() -> str:
+    """
+    Get all surgery details from the master surgeries collection.
+    Use this tool before adding to master surgeries to check if similar surgeries already exist.
+    This tool returns ALL surgeries in the master collection for comparison.
+        
+    Returns:
+        JSON string with all surgery details from master surgeries collection
+    """
+    surgeries = get_master_surgeries_with_steps_db()
+    
+    if not surgeries:
+        return "No matching surgeries found in the master collection."
+    
+    # Format the result for better readability
+    result = {
+        "total_surgeries": len(surgeries),
+        "surgeries": surgeries
+    }
+    
+    import json
+    return json.dumps(result, indent=2)

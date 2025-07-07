@@ -6,7 +6,7 @@ import time
 import os
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage
-from app.agent import analyze_surgury_analysis
+from app.agent import analyze_surgury_analysis, comparison_surgery
 from app.config import get_settings
 from app.vertex_ai_client import analyze_video as vertex_analyze_video
 
@@ -87,6 +87,57 @@ async def analyze_video(video: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
+    
+
+@app.post("/compare-video")
+async def compare_video(video: UploadFile = File(...)):
+    """
+    Upload a surgical video, analyze it using Vertex AI, and format the result with the agent.
+    Returns both the raw analysis and the agent-formatted output.
+    """
+    try:
+        # Validate video file
+        if not video.content_type.startswith('video/') and not video.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+            logger.error(f"File rejected: {video.filename} (type: {video.content_type})")
+            raise HTTPException(status_code=400, detail="File must be a video")
+
+        # Read the video file
+        video_content = await video.read()
+        if len(video_content) == 0:
+            logger.error("Uploaded video file is empty.")
+            raise HTTPException(status_code=400, detail="Video file is empty")
+
+        logger.info(f"Processing video: {video.filename}, size: {len(video_content)} bytes")
+        session_id = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        start_time = time.time()
+
+        # Step 1: Raw analysis with Vertex AI
+        logger.info("Starting raw video analysis with Vertex AI pipeline...")
+        raw_analysis = vertex_analyze_video(video_content)
+        
+        # Provide the analysis to the agent for comparison
+        agent_input = {
+            "messages": [HumanMessage(content=f"Here is the new surgical analysis. Please process it according to your instructions:\n\n{raw_analysis}\n\nVideo ID: {video.filename}")]
+        }
+        agent_result = comparison_surgery.invoke(agent_input)
+        formatted_output = agent_result["output"] if isinstance(agent_result, dict) and "output" in agent_result else str(agent_result)
+        
+        processing_time = time.time() - start_time
+
+        logger.info(f"Video analysis and agent formatting completed in {processing_time:.2f} seconds")
+
+        return {
+            "video_id": video.filename,
+            "raw_analysis": raw_analysis,
+            "agent_output": formatted_output,
+            "processing_time_seconds": processing_time
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing video: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
+
 
 @app.get("/health")
 async def health_check():
