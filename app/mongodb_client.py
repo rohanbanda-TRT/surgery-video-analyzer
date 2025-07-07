@@ -53,12 +53,16 @@ class MongoDBClient:
                                summary: str,
                                master_id: Optional[str] = None) -> str:
         """
-        Add or update master surgery information
+        Add or update master surgery information.
+
+        If a match is found, it updates the top-level summary with the new synthesized
+        summary from the agent, appends procedure steps, and adds the original analysis
+        summary to a historical list.
         
         Args:
             surgery_type: Type of surgery
             procedure_steps: List of procedure steps
-            summary: Summary of the procedure
+            summary: The new or synthesized summary of the procedure
             master_id: Optional ID of an existing master surgery to update
             
         Returns:
@@ -69,10 +73,7 @@ class MongoDBClient:
             try:
                 from bson.objectid import ObjectId
                 existing = self.master_collection.find_one({"_id": ObjectId(master_id)})
-                if existing:
-                    # Use the existing document regardless of surgery_type match
-                    pass
-                else:
+                if not existing:
                     # If ID not found, fall back to surgery_type search
                     existing = self.master_collection.find_one({"surgery_type": surgery_type})
             except Exception:
@@ -84,27 +85,24 @@ class MongoDBClient:
         
         if existing:
             # Update existing master surgery
-            # Get existing procedure steps and append new ones
             existing_steps = existing.get("procedure_steps", [])
-            all_steps = existing_steps + procedure_steps  # Append all steps without duplicate checking
+            all_steps = existing_steps + procedure_steps
             
-            # Get original_surgery_types or initialize if it doesn't exist
-            original_types = existing.get("original_surgery_types", [])
+            # original_types = existing.get("original_surgery_types", [])
+            # # Create a record of the original analysis that led to this update
+            # original_types.append({
+            #     "name": surgery_type,
+            #     "summary": summary # This is the summary from the new analysis
+            # })
             
-            # Always add the new surgery type and summary to the array
-            # This ensures we capture all variations of descriptions
-            original_types.append({
-                "name": surgery_type,
-                "summary": summary
-            })
-            
-            # Update document with both procedure_steps and original_surgery_types in a single operation
-            result = self.master_collection.update_one(
+            # Update document, replacing the top-level summary with the new one
+            self.master_collection.update_one(
                 {"_id": existing["_id"]},
                 {
                     "$set": {
+                        "summary": summary,  # Overwrite the top-level summary
                         "procedure_steps": all_steps,
-                        "original_surgery_types": original_types,
+                        # "original_surgery_types": original_types,
                         "last_updated": datetime.now().isoformat()
                     }
                 }
@@ -113,16 +111,19 @@ class MongoDBClient:
             return str(existing["_id"])
         else:
             # Create new master surgery entry
+            now = datetime.now().isoformat()
             master_data = {
                 "surgery_type": surgery_type,
+                "summary": summary,  # Add top-level summary on creation
                 "procedure_steps": procedure_steps,
-                "original_surgery_types": [
-                    {
-                        "name": surgery_type,
-                        "summary": summary
-                    }
-                ],
-                "created_at": datetime.now().isoformat()
+                # "original_surgery_types": [
+                #     {
+                #         "name": surgery_type,
+                #         "summary": summary
+                #     }
+                # ],
+                "created_at": now,
+                "last_updated": now
             }
             
             result = self.master_collection.insert_one(master_data)
