@@ -14,6 +14,7 @@ import queue
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage
 from app.agent import analyze_surgury_analysis, comparison_surgery
+from app.db_functions import get_master_surgeries_with_steps_db
 from app.config import get_settings
 from app.vertex_ai_client import analyze_video as vertex_analyze_video
 from app.realtime_video_analyzer import RealtimeVideoAnalyzer
@@ -60,6 +61,48 @@ async def api_status():
         "service": "Surgery Video Analysis API",
         "version": "1.0.0"
     }
+
+@app.get("/master-surgeries/types")
+def get_surgery_types():
+    """Get all unique surgery types from master surgeries"""
+    try:
+        # Get all master surgeries with steps
+        master_surgeries = get_master_surgeries_with_steps_db()
+        
+        # Extract unique surgery types
+        surgery_types = []
+        for surgery in master_surgeries:
+            surgery_type = surgery.get("surgery_type", "")
+            if surgery_type and surgery_type not in surgery_types:
+                surgery_types.append(surgery_type)
+        
+        return {"surgery_types": surgery_types}
+    except Exception as e:
+        logger.error(f"Error getting surgery types: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting surgery types: {str(e)}")
+
+@app.get("/master-surgeries/steps")
+def get_surgery_steps(surgery_type: str):
+    """Get procedure steps for a specific surgery type"""
+    try:
+        # Get all master surgeries with steps
+        master_surgeries = get_master_surgeries_with_steps_db()
+        
+        # Find the surgery with the matching type
+        for surgery in master_surgeries:
+            if surgery.get("surgery_type", "") == surgery_type:
+                return {
+                    "id": surgery.get("id", ""),
+                    "surgery_type": surgery_type,
+                    "procedure_steps": surgery.get("procedure_steps", []),
+                    "summary": surgery.get("summary", "")
+                }
+        
+        # If no matching surgery found
+        raise HTTPException(status_code=404, detail=f"Surgery type '{surgery_type}' not found")
+    except Exception as e:
+        logger.error(f"Error getting surgery steps: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting surgery steps: {str(e)}")
 
 @app.post("/analyze-video")
 async def analyze_video(video: UploadFile = File(...)):
@@ -253,11 +296,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Non-blocking check for new results
                     if not realtime_analyzer.result_queue.empty():
                         result = realtime_analyzer.result_queue.get_nowait()
-                        # Send the result to the WebSocket client
-                        await websocket.send_text(json.dumps({
+                        
+                        # Prepare the response data
+                        response_data = {
                             "timestamp": result['timestamp'],
-                            "analysis": result['analysis']
-                        }))
+                            "analysis": result['analysis'],
+                            "procedure_step": result.get('procedure_step', '')
+                        }
+                        
+                        # Add comparison result if available
+                        if 'comparison_result' in result:
+                            response_data["comparison_result"] = result['comparison_result']
+                        
+                        # Send the result to the WebSocket client
+                        await websocket.send_text(json.dumps(response_data))
+                        
                         # Mark as done
                         realtime_analyzer.result_queue.task_done()
                 except queue.Empty:
@@ -268,6 +321,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.1)
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
+        await websocket.close()
     finally:
         await websocket.close()
 

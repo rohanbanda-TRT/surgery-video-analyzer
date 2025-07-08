@@ -5,6 +5,104 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Real-time Surgery Video Analysis</title>
     <style>
+        html, body {
+            height: 100%;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            min-height: 90vh;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .main-content {
+            display: flex;
+            flex: 1 1 auto;
+            height: 100%;
+            min-height: 80vh;
+        }
+        .left-panel {
+            flex: 0 0 70%;
+            max-width: 70%;
+            padding-right: 24px;
+            display: flex;
+            flex-direction: column;
+        }
+        .right-panel {
+            flex: 0 0 30%;
+            max-width: 30%;
+            display: flex;
+            flex-direction: column;
+            border-left: 2px solid #f0f0f0;
+            padding-left: 24px;
+        }
+        .right-panel {
+            flex: 0 0 30%;
+            max-width: 30%;
+            display: flex;
+            flex-direction: column;
+            border-left: 2px solid #f0f0f0;
+            padding-left: 24px;
+        }
+        
+        .surgery-type-selector {
+            margin-bottom: 16px;
+            padding: 12px 0;
+        }
+        
+        .surgery-select {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+        
+        .master-steps-panel {
+            flex: 1 0 45%;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 16px;
+            max-height: 40vh;
+        }
+        
+        #masterStepsContent {
+            flex: 1 1 auto;
+            min-height: 150px;
+            max-height: 35vh;
+            overflow-y: auto;
+            background: #f5f8fa;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            padding: 12px;
+            font-size: 14px;
+            font-family: 'Fira Mono', 'Consolas', monospace;
+        }
+        
+        .comparison-panel {
+            flex: 1 0 45%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #comparisonContent {
+            flex: 1 1 auto;
+            min-height: 150px;
+            max-height: 35vh;
+            overflow-y: auto;
+            background: #fafbfc;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            padding: 12px;
+            font-size: 14px;
+            font-family: 'Fira Mono', 'Consolas', monospace;
+        }
         body {
             font-family: Arial, sans-serif;
             margin: 0;
@@ -115,34 +213,59 @@
 </head>
 <body>
     <div class="container">
-        <h1>Real-time Surgery Video Analysis</h1>
-        
-        <div class="video-container">
+      <div class="main-content">
+        <!-- Left Side (70%) -->
+        <div class="left-panel">
+          <h1>Real-time Surgery Video Analysis</h1>
+          <div class="video-container">
             <select id="cameraSelect" class="camera-select">
-                <option value="0">Default Camera</option>
-                <option value="1">Camera 1</option>
-                <option value="2">Camera 2</option>
+              <option value="0">Default Camera</option>
+              <option value="1">Camera 1</option>
+              <option value="2">Camera 2</option>
             </select>
-            
             <img id="videoFeed" class="video-feed" src="" alt="Video feed will appear here" style="display: none;">
-            
             <div class="controls">
-                <button id="startButton">Start Analysis</button>
-                <button id="stopButton" disabled>Stop Analysis</button>
+              <button id="startButton">Start Analysis</button>
+              <button id="stopButton" disabled>Stop Analysis</button>
             </div>
-            
             <div class="status" id="status">Ready to start analysis</div>
-            
             <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Starting video analysis...</p>
+              <div class="spinner"></div>
+              <p>Starting video analysis...</p>
             </div>
-        </div>
-        
-        <div class="analysis-container">
+          </div>
+          <div class="analysis-container">
             <div class="analysis-title">Real-time Analysis:</div>
             <div class="analysis-content" id="analysisContent">Analysis will appear here once the video stream starts...</div>
+          </div>
+          <div class="analysis-container" style="margin-top: 20px;">
+            <div class="analysis-title">Procedure Steps:</div>
+            <div class="analysis-content" id="procedureStepsContent">Procedure steps will appear here once the analysis begins...</div>
+          </div>
         </div>
+        <!-- Right Side (30%) -->
+        <div class="right-panel">
+          <div class="surgery-type-selector">
+            <label for="surgeryTypeSelect">Select Surgery Type:</label>
+            <select id="surgeryTypeSelect" class="surgery-select">
+              <option value="">-- Select Surgery Type --</option>
+              <!-- Surgery types will be populated dynamically -->
+            </select>
+          </div>
+          
+          <!-- Master Procedure Steps (Top 50%) -->
+          <div class="analysis-container master-steps-panel">
+            <div class="analysis-title">Master Procedure Steps:</div>
+            <div class="analysis-content" id="masterStepsContent">Select a surgery type to view procedure steps...</div>
+          </div>
+          
+          <!-- Comparison Results (Bottom 50%) -->
+          <div class="analysis-container comparison-panel">
+            <div class="analysis-title">Comparison Results:</div>
+            <div class="analysis-content" id="comparisonContent">Comparison results will appear here after multiple frames are analyzed...</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -154,9 +277,94 @@
         const status = document.getElementById('status');
         const loading = document.getElementById('loading');
         const analysisContent = document.getElementById('analysisContent');
+        const procedureStepsContent = document.getElementById('procedureStepsContent');
+        const comparisonContent = document.getElementById('comparisonContent');
+        const masterStepsContent = document.getElementById('masterStepsContent');
+        const surgeryTypeSelect = document.getElementById('surgeryTypeSelect');
+        
+        // Current selected surgery type and its data
+        let selectedSurgeryType = '';
+        let selectedSurgeryData = null;
         
         // WebSocket for real-time analysis updates
         let ws = null;
+        
+        // Fetch surgery types and populate dropdown
+        async function fetchSurgeryTypes() {
+            try {
+                const response = await fetch('/master-surgeries/types');
+                const data = await response.json();
+                
+                // Clear existing options except the default
+                while (surgeryTypeSelect.options.length > 1) {
+                    surgeryTypeSelect.remove(1);
+                }
+                
+                // Add new options
+                if (data.surgery_types && data.surgery_types.length > 0) {
+                    data.surgery_types.forEach(type => {
+                        const option = document.createElement('option');
+                        option.value = type;
+                        option.textContent = type;
+                        surgeryTypeSelect.appendChild(option);
+                    });
+                    surgeryTypeSelect.disabled = false;
+                } else {
+                    // No surgery types available
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'No surgery types available';
+                    surgeryTypeSelect.appendChild(option);
+                    surgeryTypeSelect.disabled = true;
+                }
+            } catch (error) {
+                console.error('Error fetching surgery types:', error);
+                status.textContent = `Error fetching surgery types: ${error.message}`;
+            }
+        }
+        
+        // Fetch procedure steps for selected surgery type
+        async function fetchSurgerySteps(surgeryType) {
+            if (!surgeryType) {
+                masterStepsContent.textContent = 'Select a surgery type to view procedure steps...';
+                selectedSurgeryData = null;
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/master-surgeries/steps?surgery_type=${encodeURIComponent(surgeryType)}`);
+                const data = await response.json();
+                
+                // Store the selected surgery data
+                selectedSurgeryData = data;
+                
+                // Display the procedure steps
+                if (data.procedure_steps && data.procedure_steps.length > 0) {
+                    const stepsHtml = data.procedure_steps.map((step, index) => {
+                        return `${index + 1}. ${step}`;
+                    }).join('\n');
+                    
+                    masterStepsContent.textContent = stepsHtml;
+                } else {
+                    masterStepsContent.textContent = 'No procedure steps available for this surgery type.';
+                }
+            } catch (error) {
+                console.error('Error fetching surgery steps:', error);
+                masterStepsContent.textContent = `Error fetching procedure steps: ${error.message}`;
+                selectedSurgeryData = null;
+            }
+        }
+        
+        // Handle surgery type selection change
+        surgeryTypeSelect.addEventListener('change', () => {
+            selectedSurgeryType = surgeryTypeSelect.value;
+            fetchSurgerySteps(selectedSurgeryType);
+        });
+        
+        // Fetch surgery types when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchSurgeryTypes();
+        });
         
         // Start the video analysis
         startButton.addEventListener('click', async () => {
@@ -212,6 +420,8 @@
                 }
                 
                 analysisContent.textContent = 'Analysis will appear here once the video stream starts...';
+                procedureStepsContent.textContent = 'Procedure steps will appear here once the analysis begins...';
+                comparisonContent.textContent = 'Comparison results will appear here after multiple frames are analyzed...';
             } catch (error) {
                 status.textContent = `Error: ${error.message}`;
             }
@@ -236,11 +446,114 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    
+                    // Update basic analysis
                     analysisContent.textContent = data.analysis;
+                    
+                    // Update procedure steps if available
+                    if (data.procedure_step) {
+                        // Append the new step to the existing steps
+                        if (procedureStepsContent.textContent === 'Procedure steps will appear here once the analysis begins...') {
+                            procedureStepsContent.textContent = data.procedure_step;
+                        } else {
+                            procedureStepsContent.textContent += '\n\n' + data.procedure_step;
+                        }
+                        
+                        // Auto-scroll to the bottom
+                        procedureStepsContent.scrollTop = procedureStepsContent.scrollHeight;
+                        
+                        // If we have a selected surgery type, compare with it
+                        if (selectedSurgeryData) {
+                            compareWithSelectedSurgery(data);
+                        }
+                    }
+                    
+                    // Update comparison results if available
+                    if (data.comparison_result) {
+                        comparisonContent.textContent = data.comparison_result;
+                        
+                        // Try to parse the comparison result as JSON for better formatting
+                        try {
+                            const comparisonData = JSON.parse(data.comparison_result);
+                            let formattedOutput = '';
+                            
+                            // Format current procedure steps
+                            if (comparisonData.current_procedure_steps) {
+                                formattedOutput += 'Current Procedure Steps:\n';
+                                comparisonData.current_procedure_steps.forEach(step => {
+                                    formattedOutput += `- ${step}\n`;
+                                });
+                            }
+                            
+                            // Format master procedure steps
+                            if (comparisonData.master_procedure_steps) {
+                                formattedOutput += '\nMaster Procedure Steps:\n';
+                                comparisonData.master_procedure_steps.forEach(step => {
+                                    formattedOutput += `- ${step}\n`;
+                                });
+                            }
+                            
+                            // Format missing steps
+                            if (comparisonData.missing_steps && comparisonData.missing_steps.length > 0) {
+                                formattedOutput += '\nMissing Steps:\n';
+                                comparisonData.missing_steps.forEach(step => {
+                                    formattedOutput += `- ${step.missing_step} (should occur after ${step.should_occur_after})\n`;
+                                });
+                            } else if (comparisonData.missing_steps) {
+                                formattedOutput += '\nNo missing steps detected.';
+                            }
+                            
+                            comparisonContent.textContent = formattedOutput || data.comparison_result;
+                        } catch (jsonError) {
+                            // If not valid JSON, just display as is
+                            console.log('Not a JSON comparison result, displaying as text');
+                        }
+                    }
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
                 }
             };
+            
+            // Function to compare current analysis with selected surgery
+            function compareWithSelectedSurgery(data) {
+                if (!selectedSurgeryData || !selectedSurgeryData.procedure_steps) {
+                    return;
+                }
+                
+                // Get current procedure steps from the procedureStepsContent
+                const currentSteps = procedureStepsContent.textContent.split('\n\n');
+                
+                // Create a simple comparison
+                let comparisonText = `Comparing with ${selectedSurgeryData.surgery_type}:\n\n`;
+                
+                // Find missing steps
+                const missingSteps = [];
+                selectedSurgeryData.procedure_steps.forEach((masterStep, index) => {
+                    // Simple check if any current step contains this master step
+                    const stepFound = currentSteps.some(currentStep => 
+                        currentStep.toLowerCase().includes(masterStep.toLowerCase().substring(0, 20)));
+                    
+                    if (!stepFound) {
+                        missingSteps.push({
+                            step: masterStep,
+                            index: index + 1
+                        });
+                    }
+                });
+                
+                // Format the comparison output
+                if (missingSteps.length > 0) {
+                    comparisonText += "Missing Steps:\n";
+                    missingSteps.forEach(missing => {
+                        comparisonText += `${missing.index}. ${missing.step}\n`;
+                    });
+                } else {
+                    comparisonText += "All steps from the master surgery have been performed.\n";
+                }
+                
+                // Update the comparison content
+                comparisonContent.textContent = comparisonText;
+            }
             
             ws.onerror = (error) => {
                 console.error('WebSocket error:', error);

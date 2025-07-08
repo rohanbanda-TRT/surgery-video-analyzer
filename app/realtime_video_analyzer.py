@@ -1,15 +1,21 @@
-import cv2
-import time
-import base64
-import threading
-from datetime import datetime
-import logging
-from typing import Dict, Any, Optional, List
 import os
-import numpy as np
+import time
+import cv2
+import logging
+import threading
+import queue
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
-import io
+import numpy as np
+from io import BytesIO
+
+# Vertex AI imports
+import vertexai
 from vertexai.preview.generative_models import GenerativeModel, Part
+
+# Import agent for comparison
+from app.agent import comparison_surgery
+from langchain_core.messages import HumanMessage
 import vertexai
 from google.oauth2 import service_account
 import queue
@@ -34,19 +40,26 @@ class RealtimeVideoAnalyzer:
     Class for real-time video analysis using Google Generative AI with queue-based pipeline
     """
     def __init__(self):
+        """Initialize the analyzer"""
+        self.is_running = False
+        self.cap = None
+        self.current_frame = None
+        self.current_analysis = ""
+        self.analysis_thread = None
+        self.capture_thread = None
+        self.frame_queue = queue.Queue(maxsize=10)  # Limit queue size to prevent memory issues
+        self.result_queue = queue.Queue()
+        self.last_api_call = 0
+        self.rate_limit_delay = 1.0  # Minimum seconds between API calls
+        self.last_comparison_call = 0
+        self.comparison_rate_limit = 10.0  # Minimum seconds between comparison calls
+        self.accumulated_steps = []  # Store procedure steps for comparison
+        self.last_comparison_result = None  # Cache the last comparison result
+        
         self.model = None
         self.video_capture = None
-        self.is_running = False
-        self.capture_thread = None
-        self.analysis_thread = None
-        self.current_frame = None
-        self.current_analysis = "Initializing analysis..."
         self.frame_interval = 1.0  # Capture one frame per second for analysis
         self.last_capture_time = 0
-        
-        # Create queues for the pipeline
-        self.frame_queue = queue.Queue(maxsize=10)  # Queue for frames to be analyzed
-        self.result_queue = queue.Queue()  # Queue for analysis results
         
         self.init_vertex_ai()
 
@@ -215,6 +228,8 @@ class RealtimeVideoAnalyzer:
 
     def analyze_frames_from_queue(self):
         """Process frames from the queue in a separate thread"""
+        frame_count = 0
+        
         while self.is_running:
             try:
                 # Get a frame from the queue with a timeout
@@ -228,12 +243,65 @@ class RealtimeVideoAnalyzer:
                 analysis = self.analyze_frame(frame)
                 self.current_analysis = analysis
                 
-                # Put the result in the result queue for potential WebSocket broadcasting
-                timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                self.result_queue.put({
+                # Format timestamp for the procedure step
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                
+                # Create a formatted procedure step
+                if self.accumulated_steps and len(self.accumulated_steps) > 0:
+                    prev_timestamp = self.accumulated_steps[-1].split(' - ')[0]
+                    procedure_step = f"{prev_timestamp} - {timestamp} : {analysis}"
+                else:
+                    procedure_step = f"00:00:00 - {timestamp} : {analysis}"
+                
+                # Add to accumulated steps for comparison
+                self.accumulated_steps.append(procedure_step)
+                # Keep only the last 20 steps to prevent memory issues
+                if len(self.accumulated_steps) > 20:
+                    self.accumulated_steps = self.accumulated_steps[-20:]
+                
+                # Store basic analysis result
+                result = {
                     'timestamp': timestamp,
-                    'analysis': analysis
-                })
+                    'analysis': analysis,
+                    'procedure_step': procedure_step
+                }
+                
+                # Check if we should run the comparison agent
+                # Only run if enough time has passed since the last call
+                current_time = time.time()
+                should_run_comparison = (
+                    frame_count % 5 == 0 and 
+                    len(self.accumulated_steps) >= 3 and
+                    current_time - self.last_comparison_call >= self.comparison_rate_limit
+                )
+                
+                if should_run_comparison:
+                    self.last_comparison_call = current_time
+                    try:
+                        # Use cached result if available
+                        if self.last_comparison_result:
+                            result['comparison_result'] = self.last_comparison_result
+                            self.result_queue.put(result)
+                        
+                        # Prepare raw analysis for comparison agent
+                        raw_analysis = "\n".join(self.accumulated_steps[-10:])  # Use last 10 steps
+                        
+                        # Create input for comparison agent
+                        agent_input = {
+                            "messages": [HumanMessage(content=f"Here is the real-time surgical analysis. Please process it according to your instructions:\n\n{raw_analysis}\n\nVideo ID: realtime_stream")]
+                        }
+                        
+                        # Run comparison agent in a non-blocking way
+                        threading.Thread(target=self._run_comparison_agent, args=(agent_input, result)).start()
+                        logger.info(f"Started comparison agent for frame at {timestamp}")
+                    except Exception as e:
+                        logger.error(f"Error running comparison agent: {str(e)}")
+                else:
+                    # Put the basic result in the queue
+                    self.result_queue.put(result)
+                
+                # Increment frame count
+                frame_count += 1
                 
                 logger.info(f"Frame analyzed at {timestamp}")
                 
@@ -243,6 +311,65 @@ class RealtimeVideoAnalyzer:
             except Exception as e:
                 logger.error(f"Error in analysis thread: {str(e)}")
                 time.sleep(0.5)
+                
+    def _run_comparison_agent(self, agent_input, result):
+        """Run the comparison agent in a separate thread with caching and error handling"""
+        try:
+            # Implement exponential backoff for API rate limits
+            max_retries = 3
+            retry_delay = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    # Run the comparison agent with timeout
+                    comparison_result = comparison_surgery.invoke(agent_input)
+                    break  # Success, exit retry loop
+                except Exception as retry_error:
+                    if "Resource exhausted" in str(retry_error) and attempt < max_retries - 1:
+                        # If rate limited and not the last attempt, wait and retry
+                        logger.warning(f"Rate limit hit, retrying in {retry_delay} seconds (attempt {attempt+1}/{max_retries})")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        # Last attempt or different error, re-raise
+                        raise
+            
+            # Extract the output
+            if isinstance(comparison_result, dict) and "output" in comparison_result:
+                formatted_output = comparison_result["output"]
+            else:
+                formatted_output = str(comparison_result)
+            
+            # Cache the result for future use
+            self.last_comparison_result = formatted_output
+            
+            # Add the comparison result to the result queue
+            comparison_data = {
+                'timestamp': result['timestamp'],
+                'analysis': result['analysis'],
+                'procedure_step': result['procedure_step'],
+                'comparison_result': formatted_output
+            }
+            
+            # Add to result queue
+            self.result_queue.put(comparison_data)
+            
+            logger.info(f"Comparison agent completed for frame at {result['timestamp']}")
+        except Exception as e:
+            logger.error(f"Error in comparison agent: {str(e)}")
+            # If we have a cached result, use it instead
+            if self.last_comparison_result:
+                logger.info("Using cached comparison result due to error")
+                comparison_data = {
+                    'timestamp': result['timestamp'],
+                    'analysis': result['analysis'],
+                    'procedure_step': result['procedure_step'],
+                    'comparison_result': self.last_comparison_result
+                }
+                self.result_queue.put(comparison_data)
+            else:
+                # No cached result available, just put the original result
+                self.result_queue.put(result)
 
     def get_current_frame_with_analysis(self):
         """Get the current frame with analysis overlay"""
