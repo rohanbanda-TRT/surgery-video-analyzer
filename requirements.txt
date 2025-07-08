@@ -64,9 +64,10 @@ uvicorn
 wcwidth
 yarl
 pandas
-opencv-python-headless
+opencv-python
 uuid
 loguru
 pymongo
 tensorflow
 vertexai
+Pillow
