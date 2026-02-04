@@ -83,7 +83,7 @@ Extracted procedure_steps:
 
 # Vertex AI LLM setup (see .env for GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION)
 llm = ChatVertexAI(
-    model_name="gemini-2.5-flash-preview-05-20",
+    model_name="gemini-2.0-flash",
     project=os.getenv("GOOGLE_CLOUD_PROJECT"),
     location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
     temperature=0.3,

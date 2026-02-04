@@ -1,4 +1,4 @@
-from vertexai.preview.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel, Part
 import vertexai
 from google.cloud import aiplatform
 from google.oauth2 import service_account
@@ -154,7 +154,7 @@ def analyze_video_chunk(chunk: Tuple[bytes, int, int]) -> str:
     
     try:
         rate_limit()  # Apply rate limiting
-        model = GenerativeModel('gemini-2.5-flash-preview-05-20')
+        model = GenerativeModel('gemini-2.0-flash')
         video_part = Part.from_data(data=chunk_bytes, mime_type='video/mp4')
         prompt_part = Part.from_text(SYSTEM_INSTRUCTIONS)
         
@@ -198,7 +198,7 @@ def generate_summary(successful_analyses: List[str]) -> str:
     
     try:
         rate_limit()
-        model = GenerativeModel('gemini-2.5-flash-preview-05-20')
+        model = GenerativeModel('gemini-2.0-flash	')
         summary_response = model.generate_content(
             summary_prompt,
             generation_config={"temperature": 0.3}

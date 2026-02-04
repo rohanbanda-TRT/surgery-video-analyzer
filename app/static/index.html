@@ -225,8 +225,9 @@
             </select>
             <img id="videoFeed" class="video-feed" src="" alt="Video feed will appear here" style="display: none;">
             <div class="controls">
-              <button id="startButton">Start Analysis</button>
+              <button id="startButton" disabled>Start Analysis</button>
               <button id="stopButton" disabled>Stop Analysis</button>
+              <button id="clearButton">Clear Analysis</button>
             </div>
             <div class="status" id="status">Ready to start analysis</div>
             <div class="loading" id="loading">
@@ -241,6 +242,11 @@
           <div class="analysis-container" style="margin-top: 20px;">
             <div class="analysis-title">Procedure Steps:</div>
             <div class="analysis-content" id="procedureStepsContent">Procedure steps will appear here once the analysis begins...</div>
+          </div>
+          
+          <div class="analysis-container" style="margin-top: 20px;">
+            <div class="analysis-title">Cumulative Detected Steps:</div>
+            <div class="analysis-content" id="cumulativeStepsContent">Detected steps that match the master procedure will appear here...</div>
           </div>
         </div>
         <!-- Right Side (30%) -->
@@ -273,18 +279,22 @@
         const videoFeed = document.getElementById('videoFeed');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
+        const clearButton = document.getElementById('clearButton');
         const cameraSelect = document.getElementById('cameraSelect');
-        const status = document.getElementById('status');
-        const loading = document.getElementById('loading');
+        const surgeryTypeSelect = document.getElementById('surgeryTypeSelect');
         const analysisContent = document.getElementById('analysisContent');
         const procedureStepsContent = document.getElementById('procedureStepsContent');
         const comparisonContent = document.getElementById('comparisonContent');
         const masterStepsContent = document.getElementById('masterStepsContent');
-        const surgeryTypeSelect = document.getElementById('surgeryTypeSelect');
+        const cumulativeStepsContent = document.getElementById('cumulativeStepsContent');
+        const status = document.getElementById('status');
         
         // Current selected surgery type and its data
         let selectedSurgeryType = '';
         let selectedSurgeryData = null;
+        
+        // Store cumulative detected steps
+        let cumulativeDetectedSteps = [];
         
         // WebSocket for real-time analysis updates
         let ws = null;
@@ -359,6 +369,9 @@
         surgeryTypeSelect.addEventListener('change', () => {
             selectedSurgeryType = surgeryTypeSelect.value;
             fetchSurgerySteps(selectedSurgeryType);
+            
+            // Enable or disable the start button based on surgery type selection
+            startButton.disabled = !selectedSurgeryType;
         });
         
         // Fetch surgery types when the page loads
@@ -375,8 +388,13 @@
             status.textContent = 'Starting video analysis...';
             
             try {
-                // Call the start endpoint
-                const response = await fetch(`/realtime-video/start?camera_index=${cameraIndex}`);
+                // Reset analysis content when starting new analysis
+                analysisContent.textContent = 'Analysis will appear here once the video stream starts...';
+                procedureStepsContent.textContent = 'Procedure steps will appear here once the analysis begins...';
+                comparisonContent.textContent = 'Comparison results will appear here after multiple frames are analyzed...';
+                
+                // Call the start endpoint with the selected surgery type
+                const response = await fetch(`/realtime-video/start?camera_index=${cameraIndex}&surgery_type=${encodeURIComponent(selectedSurgeryType)}`);
                 const data = await response.json();
                 
                 if (response.ok) {
@@ -409,7 +427,7 @@
                 // Update UI
                 videoFeed.src = '';
                 videoFeed.style.display = 'none';
-                startButton.disabled = false;
+                startButton.disabled = !selectedSurgeryType; // Only enable if surgery type is selected
                 stopButton.disabled = true;
                 status.textContent = data.message;
                 
@@ -419,9 +437,9 @@
                     ws = null;
                 }
                 
+                // Only clear the analysis content, keep procedure steps and comparison results
                 analysisContent.textContent = 'Analysis will appear here once the video stream starts...';
-                procedureStepsContent.textContent = 'Procedure steps will appear here once the analysis begins...';
-                comparisonContent.textContent = 'Comparison results will appear here after multiple frames are analyzed...';
+                // Keep procedure steps and comparison results visible
             } catch (error) {
                 status.textContent = `Error: ${error.message}`;
             }
@@ -433,6 +451,10 @@
             if (ws) {
                 ws.close();
             }
+            
+            // Reset cumulative steps for new analysis session
+            cumulativeDetectedSteps = [];
+            cumulativeStepsContent.textContent = 'Detected steps that match the master procedure will appear here...';
             
             // Create new WebSocket connection
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -472,41 +494,71 @@
                     if (data.comparison_result) {
                         comparisonContent.textContent = data.comparison_result;
                         
-                        // Try to parse the comparison result as JSON for better formatting
+                        // Process the comparison result to extract detected steps
                         try {
-                            const comparisonData = JSON.parse(data.comparison_result);
-                            let formattedOutput = '';
+                            // First try to parse as JSON (for backward compatibility)
+                            try {
+                                const comparisonData = JSON.parse(data.comparison_result);
+                                let formattedOutput = '';
+                                
+                                // Format current procedure steps
+                                if (comparisonData.current_procedure_steps) {
+                                    formattedOutput += 'Current Procedure Steps:\n';
+                                    comparisonData.current_procedure_steps.forEach(step => {
+                                        formattedOutput += `- ${step}\n`;
+                                    });
+                                }
+                                
+                                // Format master procedure steps
+                                if (comparisonData.master_procedure_steps) {
+                                    formattedOutput += '\nMaster Procedure Steps:\n';
+                                    comparisonData.master_procedure_steps.forEach(step => {
+                                        formattedOutput += `- ${step}\n`;
+                                    });
+                                }
+                                
+                                // Format missing steps
+                                if (comparisonData.missing_steps && comparisonData.missing_steps.length > 0) {
+                                    formattedOutput += '\nMissing Steps:\n';
+                                    comparisonData.missing_steps.forEach(step => {
+                                        formattedOutput += `- ${step.missing_step} (should occur after ${step.should_occur_after})\n`;
+                                    });
+                                } else if (comparisonData.missing_steps) {
+                                    formattedOutput += '\nNo missing steps detected.';
+                                }
+                                
+                                comparisonContent.textContent = formattedOutput || data.comparison_result;
+                            } catch (jsonError) {
+                                // Not valid JSON, process as text
+                                console.log('Not a JSON comparison result, processing as text');
+                            }
                             
-                            // Format current procedure steps
-                            if (comparisonData.current_procedure_steps) {
-                                formattedOutput += 'Current Procedure Steps:\n';
-                                comparisonData.current_procedure_steps.forEach(step => {
-                                    formattedOutput += `- ${step}\n`;
+                            // Extract detected steps from the text content
+                            const comparisonText = data.comparison_result;
+                            
+                            // Look for "CURRENT PROCEDURE STEPS:" section
+                            const currentStepsMatch = comparisonText.match(/CURRENT PROCEDURE STEPS:[\s\S]*?(?=\n\s*\n|\n\s*[A-Z]|$)/i);
+                            if (currentStepsMatch) {
+                                const currentStepsText = currentStepsMatch[0];
+                                
+                                // Extract individual steps (lines starting with numbers, dashes, or bullets)
+                                const stepLines = currentStepsText.split('\n')
+                                    .slice(1) // Skip the header line
+                                    .filter(line => line.trim().match(/^[\d\-\*•\s]+/)) // Lines starting with numbers, dashes, bullets
+                                    .map(line => line.replace(/^[\d\-\*•\s]+/, '').trim()); // Remove the prefix
+                                
+                                // Add new steps to cumulative list (avoid duplicates)
+                                stepLines.forEach(step => {
+                                    if (step && !cumulativeDetectedSteps.includes(step)) {
+                                        cumulativeDetectedSteps.push(step);
+                                    }
                                 });
                             }
                             
-                            // Format master procedure steps
-                            if (comparisonData.master_procedure_steps) {
-                                formattedOutput += '\nMaster Procedure Steps:\n';
-                                comparisonData.master_procedure_steps.forEach(step => {
-                                    formattedOutput += `- ${step}\n`;
-                                });
-                            }
-                            
-                            // Format missing steps
-                            if (comparisonData.missing_steps && comparisonData.missing_steps.length > 0) {
-                                formattedOutput += '\nMissing Steps:\n';
-                                comparisonData.missing_steps.forEach(step => {
-                                    formattedOutput += `- ${step.missing_step} (should occur after ${step.should_occur_after})\n`;
-                                });
-                            } else if (comparisonData.missing_steps) {
-                                formattedOutput += '\nNo missing steps detected.';
-                            }
-                            
-                            comparisonContent.textContent = formattedOutput || data.comparison_result;
-                        } catch (jsonError) {
-                            // If not valid JSON, just display as is
-                            console.log('Not a JSON comparison result, displaying as text');
+                            // Update the cumulative steps display
+                            updateCumulativeStepsDisplay();
+                        } catch (error) {
+                            console.error('Error processing comparison result:', error);
                         }
                     }
                 } catch (error) {
@@ -564,6 +616,42 @@
                 console.log('WebSocket connection closed');
             };
         }
+        
+        // Function to update the cumulative steps display
+        function updateCumulativeStepsDisplay() {
+            if (cumulativeDetectedSteps.length === 0) {
+                cumulativeStepsContent.textContent = 'No steps detected yet that match the master procedure...';
+                return;
+            }
+            
+            // Format the cumulative steps with numbering
+            let formattedSteps = '';
+            cumulativeDetectedSteps.forEach((step, index) => {
+                formattedSteps += `${index + 1}. ${step}\n`;
+            });
+            
+            // Update the display
+            cumulativeStepsContent.textContent = formattedSteps;
+            
+            // Calculate and show progress percentage if master steps are available
+            if (selectedSurgeryData && selectedSurgeryData.procedure_steps) {
+                const totalSteps = selectedSurgeryData.procedure_steps.length;
+                const completedSteps = cumulativeDetectedSteps.length;
+                const progressPercentage = Math.round((completedSteps / totalSteps) * 100);
+                
+                cumulativeStepsContent.textContent += `\n\nProgress: ${progressPercentage}% (${completedSteps}/${totalSteps} steps)`;
+            }
+        }
+        
+        // Clear Analysis button functionality
+        clearButton.addEventListener('click', () => {
+            analysisContent.textContent = 'Analysis will appear here once the video stream starts...';
+            procedureStepsContent.textContent = 'Procedure steps will appear here once the analysis begins...';
+            comparisonContent.textContent = 'Comparison results will appear here after multiple frames are analyzed...';
+            cumulativeStepsContent.textContent = 'Detected steps that match the master procedure will appear here...';
+            cumulativeDetectedSteps = []; // Reset cumulative steps
+            status.textContent = 'Analysis cleared';
+        });
         
         // Handle page unload to stop the video analysis
         window.addEventListener('beforeunload', async () => {

@@ -2,6 +2,7 @@ from typing import Dict, List, Any, Optional
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 from app.db_functions import store_analysis_in_db, add_to_master_surgeries_db, get_master_surgeries_db, get_master_surgeries_with_steps_db
+import json
 
 class StoreAnalysisInput(BaseModel):
     """Input for storing analysis results in the database."""
@@ -89,7 +90,6 @@ def get_master_surgeries_tool() -> str:
         "surgeries": surgeries
     }
     
-    import json
     return json.dumps(result, indent=2)
 
 @tool("add_to_master_surgeries", args_schema=AddToMasterInput)
@@ -145,5 +145,4 @@ def get_master_surgeries_with_steps_tool() -> str:
         "surgeries": surgeries
     }
     
-    import json
     return json.dumps(result, indent=2)

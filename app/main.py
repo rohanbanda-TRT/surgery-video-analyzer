@@ -214,22 +214,41 @@ async def health_check():
 realtime_analyzer = RealtimeVideoAnalyzer()
 
 @app.get("/realtime-video/start")
-async def start_realtime_analysis(camera_index: int = 0):
+async def start_realtime_analysis(camera_index: int = 0, surgery_type: str = None):
     """
     Start real-time video analysis from webcam.
     Returns a status message indicating if the capture was successfully started.
+    
+    Parameters:
+    - camera_index: Index of the camera to use
+    - surgery_type: Type of surgery for comparison (required)
     """
     try:
+        # Validate surgery type
+        if not surgery_type:
+            raise HTTPException(status_code=400, detail="Surgery type is required")
+            
         # Stop any existing capture
         if realtime_analyzer.is_running:
             realtime_analyzer.stop_capture()
         
-        # Start new capture
-        success = realtime_analyzer.start_capture(camera_index)
+        # Get surgery steps for the selected type
+        try:
+            surgery_data = get_surgery_steps(surgery_type)
+            if not surgery_data:
+                raise HTTPException(status_code=404, detail=f"Surgery type '{surgery_type}' not found")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving surgery steps: {str(e)}")
+        
+        # Start new capture with surgery type information
+        success = realtime_analyzer.start_capture(camera_index, surgery_type=surgery_type, surgery_data=surgery_data)
         if success:
-            return {"status": "success", "message": f"Started real-time video analysis on camera {camera_index}"}
+            return {"status": "success", "message": f"Started real-time video analysis on camera {camera_index} for {surgery_type}"}
         else:
             raise HTTPException(status_code=500, detail=f"Failed to start video capture on camera {camera_index}")
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
     except Exception as e:
         logger.error(f"Error starting real-time analysis: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error starting real-time analysis: {str(e)}")

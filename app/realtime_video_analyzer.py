@@ -47,14 +47,19 @@ class RealtimeVideoAnalyzer:
         self.current_analysis = ""
         self.analysis_thread = None
         self.capture_thread = None
-        self.frame_queue = queue.Queue(maxsize=10)  # Limit queue size to prevent memory issues
+        self.frame_queue = queue.Queue(maxsize=100)  # Limit queue size to prevent memory issues
         self.result_queue = queue.Queue()
         self.last_api_call = 0
         self.rate_limit_delay = 1.0  # Minimum seconds between API calls
         self.last_comparison_call = 0
-        self.comparison_rate_limit = 10.0  # Minimum seconds between comparison calls
+        self.comparison_rate_limit = 5.0  # Reduced from 10.0 to get more frequent comparisons
         self.accumulated_steps = []  # Store procedure steps for comparison
         self.last_comparison_result = None  # Cache the last comparison result
+        self.detected_steps = []  # Store detected steps for cumulative comparison
+        
+        # Surgery information
+        self.surgery_type = None
+        self.surgery_data = None
         
         self.model = None
         self.video_capture = None
@@ -76,18 +81,33 @@ class RealtimeVideoAnalyzer:
                 os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
             )
             vertexai.init(project=project_id, location=location, credentials=credentials)
-            self.model = GenerativeModel('gemini-2.5-flash-preview-05-20')
+            self.model = GenerativeModel('gemini-2.0-flash')
             logger.info("✅ Vertex AI initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Vertex AI: {str(e)}")
             raise Exception(f"Failed to initialize Vertex AI: {str(e)}")
 
-    def start_capture(self, camera_index=0):
-        """Start video capture from webcam with separate threads for capture and analysis"""
+    def start_capture(self, camera_index=0, surgery_type=None, surgery_data=None):
+        """Start video capture from webcam with separate threads for capture and analysis
+        
+        Parameters:
+        - camera_index: Index of the camera to use
+        - surgery_type: Type of surgery for comparison
+        - surgery_data: Surgery data containing procedure steps for comparison
+        """
         try:
             self.video_capture = cv2.VideoCapture(camera_index)
             if not self.video_capture.isOpened():
                 raise Exception(f"Could not open video capture device {camera_index}")
+            
+            # Store surgery information for comparison
+            self.surgery_type = surgery_type
+            self.surgery_data = surgery_data
+            
+            # Reset accumulated steps, detected steps, and comparison results
+            self.accumulated_steps = []
+            self.detected_steps = []
+            self.last_comparison_result = None
             
             # Clear any existing items in the queues
             while not self.frame_queue.empty():
@@ -174,54 +194,61 @@ class RealtimeVideoAnalyzer:
 
     def analyze_frame(self, frame):
         """Analyze a single frame with Gemini AI"""
+        # Apply rate limiting
+        self.rate_limit()
+        
+        # Convert frame to JPEG for API
+        _, buffer = cv2.imencode('.jpg', frame)
+        image_bytes = buffer.tobytes()
+        
+        # Create PIL Image for Vertex AI
+        image = Image.open(BytesIO(image_bytes))
+        
+        # Resize image to reduce API costs and improve performance
+        max_dim = 512
+        if max(image.size) > max_dim:
+            ratio = max_dim / max(image.size)
+            new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+            image = image.resize(new_size, Image.LANCZOS)
+        
+        # Convert back to bytes for Vertex AI
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG")
+        image_bytes = buffered.getvalue()
+        
         try:
-            # Convert frame to bytes
-            _, buffer = cv2.imencode('.jpg', frame)
-            image_bytes = buffer.tobytes()
+            # Create the prompt for real-time analysis
+            prompt = """You are an AI surgical assistant analyzing a live surgery video feed.  
+            Describe what you see in the current frame of the surgical procedure.
+            Focus on identifying surgical instruments, anatomical structures, and the current step of the procedure.
+            Be concise and precise. Limit your response to 1-2 sentences.
+            Format your response as a brief description of what's happening."""
             
-            # System instructions for surgical video analysis
-            system_instructions = """
-            You are analyzing a surgical/medical procedure in real-time.
-            
-            **CRITICAL: ONLY describe what you can DIRECTLY SEE in the video frame.**
-            
-            Format your response as:
-            
-            Process: [Brief name of the surgical step/procedure observed]
-            Explanation: [Detailed description of exactly what is happening - include specific actions, instruments used, anatomical structures visible, and any techniques demonstrated]
-            
-            **STRICT RULES - NO EXCEPTIONS:**
-            1. ONLY describe what is DIRECTLY VISIBLE in the frame
-            2. DO NOT make assumptions, inferences, or educated guesses
-            3. DO NOT use general medical knowledge to fill in gaps
-            4. DO NOT hallucinate or illustrate content that is not visible
-            5. If the view is unclear, state "[View unclear/obstructed]"
-            6. If you cannot see what is happening, say "Not clearly visible"
-            7. Use proper medical terminology ONLY for what you can see
-            8. Keep your response concise and focused
-            
-            **Focus ONLY on:**
-            - Surgical instruments being used (if visible)
-            - Anatomical structures visible
-            - Specific surgical techniques (if clearly visible)
-            - Step-by-step actions (only what you can see)
-            
-            **If you cannot see clearly, say so rather than guessing.**
-            """
-            
-            self.rate_limit()  # Apply rate limiting
-            
-            # Create parts for the model
-            video_part = Part.from_data(data=image_bytes, mime_type='image/jpeg')
-            prompt_part = Part.from_text(system_instructions)
+            # Apply rate limiting again before API call
+            self.rate_limit()
             
             # Generate content
             response = self.model.generate_content(
-                [video_part, prompt_part],
-                generation_config={"temperature": 0.2}  # Lower temperature for consistency
+                [
+                    prompt,
+                    Part.from_data(data=image_bytes, mime_type='image/jpeg')
+                ],
+                generation_config={
+                    "max_output_tokens": 100,
+                    "temperature": 0.2,
+                    "top_p": 0.95,
+                    "top_k": 40
+                },
+                stream=False
             )
             
-            return response.text
+            # Extract the text response
+            analysis = response.text
+            
+            # Clean up the response
+            analysis = analysis.strip()
+            
+            return analysis
         except Exception as e:
             logger.error(f"Error analyzing frame: {str(e)}")
             return f"Error analyzing frame: {str(e)}"
@@ -267,37 +294,51 @@ class RealtimeVideoAnalyzer:
                 }
                 
                 # Check if we should run the comparison agent
-                # Only run if enough time has passed since the last call
+                # Only run if enough time has passed since the last call and we have surgery data
                 current_time = time.time()
                 should_run_comparison = (
-                    frame_count % 5 == 0 and 
-                    len(self.accumulated_steps) >= 3 and
-                    current_time - self.last_comparison_call >= self.comparison_rate_limit
+                    frame_count % 3 == 0 and
+                    len(self.accumulated_steps) >= 2 and
+                    current_time - self.last_comparison_call >= self.comparison_rate_limit and
+                    self.surgery_type and self.surgery_data
                 )
                 
                 if should_run_comparison:
                     self.last_comparison_call = current_time
-                    try:
-                        # Use cached result if available
-                        if self.last_comparison_result:
-                            result['comparison_result'] = self.last_comparison_result
-                            self.result_queue.put(result)
-                        
-                        # Prepare raw analysis for comparison agent
-                        raw_analysis = "\n".join(self.accumulated_steps[-10:])  # Use last 10 steps
-                        
-                        # Create input for comparison agent
-                        agent_input = {
-                            "messages": [HumanMessage(content=f"Here is the real-time surgical analysis. Please process it according to your instructions:\n\n{raw_analysis}\n\nVideo ID: realtime_stream")]
-                        }
-                        
-                        # Run comparison agent in a non-blocking way
-                        threading.Thread(target=self._run_comparison_agent, args=(agent_input, result)).start()
-                        logger.info(f"Started comparison agent for frame at {timestamp}")
-                    except Exception as e:
-                        logger.error(f"Error running comparison agent: {str(e)}")
+                    
+                    # Prepare input for comparison agent with cumulative history
+                    agent_input = {
+                        "messages": [
+                            HumanMessage(content=f"""
+                            You are a surgical procedure comparison assistant. Your task is to compare the detected surgical steps with the master procedure steps and provide a detailed analysis.
+                            
+                            SURGERY TYPE: {self.surgery_type}
+                            
+                            DETECTED STEPS (CHRONOLOGICAL ORDER):
+                            {chr(10).join(self.accumulated_steps[-20:])}
+                            
+                            MASTER PROCEDURE STEPS (CORRECT ORDER):
+                            {chr(10).join([f"{i+1}. {step}" for i, step in enumerate(self.surgery_data.get('procedure_steps', []))])}
+                            
+                            Please analyze the detected steps and compare them with the master procedure steps. Provide the following information:
+                            
+                            1. CURRENT PROCEDURE STEPS: List the master procedure steps that have been detected so far (cumulative).
+                            2. MISSING STEPS: List the master procedure steps that have not been detected yet.
+                            3. PROGRESS: Estimate the percentage of completion based on detected steps.
+                            4. ANALYSIS: Provide a brief analysis of the procedure progress.
+                            
+                            Remember that this is a cumulative analysis - once a step has been detected, it should remain in the CURRENT PROCEDURE STEPS list even if it's not mentioned in recent detections.
+                            """)
+                        ]
+                    }
+                    
+                    logger.info(f"Including master surgery steps in comparison prompt: {self.surgery_type}")
+                    logger.info(f"Started comparison agent for frame at {timestamp}")
+                    
+                    # Run comparison agent in a separate thread
+                    threading.Thread(target=self._run_comparison_agent, args=(agent_input, result)).start()
                 else:
-                    # Put the basic result in the queue
+                    # Put the basic result in the queue if no comparison is run
                     self.result_queue.put(result)
                 
                 # Increment frame count
@@ -311,32 +352,16 @@ class RealtimeVideoAnalyzer:
             except Exception as e:
                 logger.error(f"Error in analysis thread: {str(e)}")
                 time.sleep(0.5)
-                
+
     def _run_comparison_agent(self, agent_input, result):
         """Run the comparison agent in a separate thread with caching and error handling"""
         try:
-            # Implement exponential backoff for API rate limits
-            max_retries = 3
-            retry_delay = 2
+            # Run the comparison agent
+            comparison_result = comparison_surgery.invoke(agent_input)
             
-            for attempt in range(max_retries):
-                try:
-                    # Run the comparison agent with timeout
-                    comparison_result = comparison_surgery.invoke(agent_input)
-                    break  # Success, exit retry loop
-                except Exception as retry_error:
-                    if "Resource exhausted" in str(retry_error) and attempt < max_retries - 1:
-                        # If rate limited and not the last attempt, wait and retry
-                        logger.warning(f"Rate limit hit, retrying in {retry_delay} seconds (attempt {attempt+1}/{max_retries})")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                    else:
-                        # Last attempt or different error, re-raise
-                        raise
-            
-            # Extract the output
-            if isinstance(comparison_result, dict) and "output" in comparison_result:
-                formatted_output = comparison_result["output"]
+            # Extract the text content from the comparison result
+            if hasattr(comparison_result, 'content'):
+                formatted_output = comparison_result.content
             else:
                 formatted_output = str(comparison_result)
             
@@ -427,7 +452,7 @@ class RealtimeVideoAnalyzer:
             frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         
         return frame
-        
+    
     def get_latest_analysis_result(self):
         """Get the latest analysis result without removing it from the queue"""
         if not self.result_queue.empty():
